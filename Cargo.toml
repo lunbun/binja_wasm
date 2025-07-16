@@ -1,0 +1,15 @@
+[package]
+name = "binja_wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+binaryninja = { git = "https://github.com/Vector35/binaryninja-api.git", tag = "v5.0.7648-stable" }
+binaryninjacore-sys = { git = "https://github.com/Vector35/binaryninja-api.git", tag = "v5.0.7648-stable" }
+log = "0.4.27"
+wasmparser = "0.235.0"
+rangemap = "1.5.1"
+once_cell = "1.21.3"
