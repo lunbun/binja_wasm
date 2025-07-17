@@ -1,5 +1,5 @@
-use crate::binja::parse::module_data::FunctionData;
-use binaryninja::architecture::BranchKind;
+use std::cell::OnceCell;
+use crate::binja::parse::module_data::{BranchTarget, BranchTargetAddr, FunctionData, OperatorData};
 use std::collections::BTreeMap;
 use std::pin::Pin;
 use wasmparser::{BinaryReader, FunctionBody, Operator};
@@ -14,119 +14,119 @@ pub(crate) fn parse_func(
     let mut ops_reader = body.get_operators_reader().map_err(|_| ())?;
     let ops_start = ops_reader.original_position() as u64;
 
-    enum BreakKind {
-        Br { from: u64 },
-        BrIf { from: u64, else_: u64 }
+    type BlockId = usize;
+    enum LabelKind {
+        Resolved(u64),  // Known address.
+
+        // Refer to the operator after the end of a block.
+        After(BlockId),
+
+        // Refer to the "break" address of a label. For a loop block, this is
+        // the start of the loop. For all other blocks, this is the operator after
+        // the end of the block.
+        Break(BlockId),
+
+        // Refer to the "else" branch of an "if" block. If the block is just an "if"
+        // block (not an "if-else" block), this is just the operator after the
+        // end of the block.
+        Else(BlockId),
     }
     enum BlockKind {
         Normal,
         Function,
         Loop,
-        If { if_start: u64 },
-        IfElse { if_start: u64, if_end: u64, else_start: u64 },
+        If,
+        IfElse { else_start: u64 },
     }
     struct Block {
         pub start: u64,
-        pub brs: Vec<BreakKind>,
+        pub after: OnceCell<u64>,   // Address of the next operator after the end of this block.
         pub kind: BlockKind
     }
-    impl Block {
-        fn new(start: u64, kind: BlockKind) -> Self {
-            Block {
-                start,
-                brs: Vec::new(),
-                kind,
-            }
-        }
-    }
 
-    let mut block_stack = vec![Block::new(ops_start, BlockKind::Function)];
+    let mut blocks = Vec::new();
+    let mut block_stack = Vec::new();
+    fn push_block(blocks: &mut Vec<Block>, block_stack: &mut Vec<BlockId>, start: u64, kind: BlockKind) -> BlockId {
+        let block_id = blocks.len() as BlockId;
+        blocks.push(Block {
+            start,
+            after: OnceCell::new(),
+            kind,
+        });
+        block_stack.push(block_id);
+        block_id
+    }
+    fn get_nth_block_id(block_stack: &[BlockId], n: u32) -> Result<BlockId, ()> {
+        Ok(*block_stack.get(block_stack.len() - n as usize - 1).ok_or(())?)
+    }
+    push_block(&mut blocks, &mut block_stack, ops_start, BlockKind::Function);
+
+    // Initial parsing phase.
     let mut ops = BTreeMap::new();
-    let mut branches: BTreeMap<u64, Vec<BranchKind>> = BTreeMap::new();
-    let mut add_branch = |addr: u64, branch: BranchKind| {
-        branches.entry(addr).or_default().push(branch);
-    };
+    let mut unpatched_branches: BTreeMap<u64, BranchTarget<LabelKind>> = BTreeMap::new();
     while !ops_reader.eof() {
         let offset = ops_reader.original_position() as u64;
         let op = ops_reader.read().map_err(|_| ())?;
         let next_offset = ops_reader.original_position() as u64;
 
         match &op {
-            // Defer insertion of branches for the following operators
-            // until the end of the block.
-            Operator::Block { blockty } => {
-                block_stack.push(Block::new(offset, BlockKind::Normal));
+            Operator::Block { .. } => {
+                push_block(&mut blocks, &mut block_stack, offset, BlockKind::Normal);
             }
-            Operator::Loop { blockty } => {
-                block_stack.push(Block::new(offset, BlockKind::Loop));
+            Operator::Loop { .. } => {
+                push_block(&mut blocks, &mut block_stack, offset, BlockKind::Loop);
             }
-            Operator::If { blockty } => {
-                block_stack.push(Block::new(offset, BlockKind::If {
-                    if_start: next_offset
-                }));
+            Operator::If { .. } => {
+                let block_id = push_block(&mut blocks, &mut block_stack, offset, BlockKind::If);
+                unpatched_branches.insert(offset, BranchTarget::Conditional{
+                    true_target: LabelKind::Resolved(next_offset),
+                    false_target: LabelKind::Else(block_id)
+                });
             }
             Operator::Else => {
-                let block = block_stack.last_mut().ok_or(())?;
-                if let BlockKind::If { if_start } = &block.kind {
-                    block.kind = BlockKind::IfElse {
-                        if_start: *if_start,
-                        if_end: offset,
-                        else_start: next_offset,
-                    };
-                } else {
+                let block_id = *block_stack.last().ok_or(())?;
+                let block = blocks.get_mut(block_id as usize).ok_or(())?;
+                if !matches!(block.kind, BlockKind::If) {
                     return Err(());
                 }
+                block.kind = BlockKind::IfElse {
+                    else_start: next_offset
+                };
+                unpatched_branches.insert(offset, BranchTarget::Unconditional(LabelKind::After(block_id)));
             }
             Operator::Br { relative_depth } => {
-                let index = block_stack.len() - *relative_depth as usize - 1;
-                let block = block_stack.get_mut(index).ok_or(())?;
-                block.brs.push(BreakKind::Br { from: offset });
+                let block_id = get_nth_block_id(&block_stack, *relative_depth)?;
+                unpatched_branches.insert(offset, BranchTarget::Unconditional(LabelKind::Break(block_id)));
             }
             Operator::BrIf { relative_depth } => {
-                let index = block_stack.len() - *relative_depth as usize - 1;
-                let block = block_stack.get_mut(index).ok_or(())?;
-                block.brs.push(BreakKind::BrIf { from: offset, else_: next_offset });
+                let block_id = get_nth_block_id(&block_stack, *relative_depth)?;
+                unpatched_branches.insert(
+                    offset,
+                    BranchTarget::Conditional {
+                        true_target: LabelKind::Break(block_id),
+                        false_target: LabelKind::Resolved(next_offset)
+                    }
+                );
             }
-
-            // The following operators insert branches immediately.
-            Operator::Unreachable => {
-                add_branch(offset, BranchKind::Exception);
-            }
-            Operator::Return => {
-                add_branch(offset, BranchKind::FunctionReturn);
+            Operator::BrTable { targets } => {
+                let target_labels = targets.targets().map(|target| {
+                    let target = target.map_err(|_| ())?;
+                    let block_id = get_nth_block_id(&block_stack, target)?;
+                    Ok(LabelKind::Break(block_id))
+                }).collect::<Result<Vec<_>, _>>()?;
+                let default_id = get_nth_block_id(&block_stack, targets.default())?;
+                unpatched_branches.insert(offset, BranchTarget::Table {
+                    targets: target_labels,
+                    default_target: LabelKind::Break(default_id)
+                });
             }
             Operator::End => {
-                let block = block_stack.pop().ok_or(())?;
+                let block_id = block_stack.pop().ok_or(())?;
+                let block = blocks.get_mut(block_id as usize).ok_or(())?;
+                block.after.set(next_offset).map_err(|_| ())?;
 
-                for br in &block.brs {
-                    match br {
-                        BreakKind::Br { from } => {
-                            add_branch(*from, BranchKind::Unconditional(next_offset));
-                        }
-                        BreakKind::BrIf { from, else_ } => {
-                            add_branch(*from, BranchKind::True(next_offset));
-                            add_branch(*from, BranchKind::False(*else_));
-                        }
-                    }
-                }
-
-                match block.kind {
-                    BlockKind::Normal => {}
-                    BlockKind::Function => {
-                        add_branch(offset, BranchKind::FunctionReturn);
-                    }
-                    BlockKind::Loop => {
-                        add_branch(offset, BranchKind::Unconditional(block.start));
-                    }
-                    BlockKind::If { if_start } => {
-                        add_branch(block.start, BranchKind::True(if_start));
-                        add_branch(block.start, BranchKind::False(next_offset));
-                    }
-                    BlockKind::IfElse { if_start, if_end, else_start } => {
-                        add_branch(block.start, BranchKind::True(if_start));
-                        add_branch(block.start, BranchKind::False(else_start));
-                        add_branch(if_end, BranchKind::Unconditional(next_offset));
-                    }
+                if matches!(block.kind, BlockKind::Function) {
+                    unpatched_branches.insert(offset, BranchTarget::FunctionEnd);
                 }
             }
             _ => {}
@@ -136,7 +136,63 @@ pub(crate) fn parse_func(
         let op = unsafe { std::mem::transmute::<Operator<'_>, Operator<'static>>(op) };
 
         let size = (ops_reader.original_position() as u64 - offset) as usize;
-        ops.insert(offset, (op, size));
+        ops.insert(offset, OperatorData {
+            op,
+            size,
+            target: None
+        });
+    }
+
+    // Now that we know the addresses of all blocks, patch the branch
+    // targets.
+    let patch_label = |label: &LabelKind| {
+        Ok(match label {
+            LabelKind::Resolved(addr) => *addr,
+            LabelKind::After(block_id) => {
+                let block = blocks.get(*block_id as usize).ok_or(())?;
+                *block.after.get().ok_or(())?
+            },
+            LabelKind::Break(block_id) => {
+                let block = blocks.get(*block_id as usize).ok_or(())?;
+                if matches!(block.kind, BlockKind::Loop) {
+                    block.start
+                } else {
+                    *block.after.get().ok_or(())?
+                }
+            },
+            LabelKind::Else(block_id) => {
+                let block = blocks.get(*block_id as usize).ok_or(())?;
+                if let BlockKind::IfElse { else_start, .. } = &block.kind {
+                    *else_start
+                } else {
+                    *block.after.get().ok_or(())?
+                }
+            }
+        })
+    };
+    for (offset, unpatched_branch) in &unpatched_branches {
+        let branch = match unpatched_branch {
+            BranchTarget::Unconditional(label) => {
+                BranchTargetAddr::Unconditional(patch_label(label)?)
+            }
+            BranchTarget::Conditional { true_target, false_target } => {
+                BranchTargetAddr::Conditional {
+                    true_target: patch_label(true_target)?,
+                    false_target: patch_label(false_target)?
+                }
+            }
+            BranchTarget::Table { targets, default_target } => {
+                let targets = targets.into_iter()
+                    .map(patch_label)
+                    .collect::<Result<Vec<_>, _>>()?;
+                BranchTargetAddr::Table {
+                    targets,
+                    default_target: patch_label(default_target)?
+                }
+            }
+            BranchTarget::FunctionEnd => BranchTargetAddr::FunctionEnd
+        };
+        ops.get_mut(offset).ok_or(())?.target = Some(branch);
     }
 
     Ok(FunctionData::new(
@@ -145,7 +201,6 @@ pub(crate) fn parse_func(
         ops_start,
         end,
         ops,
-        branches,
         raw,
     ))
 }

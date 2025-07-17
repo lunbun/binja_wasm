@@ -60,10 +60,10 @@ impl WebAssemblyArchitecture {
                 vec_with_opcode!("_funchdr.locals"),
             ))
         } else {
-            let (op, size) = func.ops.get(&addr)?;
+            let op = func.ops.get(&addr)?;
             Some((
-                *size,
-                match op {
+                op.size,
+                match &op.op {
                     // Control instructions
                     Operator::Unreachable => vec_with_opcode!("unreachable"),
                     Operator::Nop => vec_with_opcode!("nop"),

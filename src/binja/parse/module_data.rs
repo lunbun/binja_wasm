@@ -1,5 +1,4 @@
 use crate::util::arc_identity::ArcIdentity;
-use binaryninja::architecture::BranchKind;
 use once_cell::sync::Lazy;
 use rangemap::RangeMap;
 use std::collections::BTreeMap;
@@ -9,6 +8,31 @@ use wasmparser::Operator;
 
 // Unfortunately, due to limitations of the binja rust API, we need to store module data
 // in a global static variable...
+#[derive(Debug)]
+pub enum BranchTarget<T> {
+    Unconditional(T),
+    Conditional {
+        true_target: T,
+        false_target: T,
+    },
+    Table {
+        targets: Vec<T>,
+        default_target: T,
+    },
+    FunctionEnd
+}
+
+pub type BranchTargetAddr = BranchTarget<u64>;
+
+#[derive(Debug)]
+pub struct OperatorData<'a> {
+    pub op: Operator<'a>,
+    pub size: usize,
+
+    // pub stack_height: usize,    // Stack height before the operator is executed.
+    pub target: Option<BranchTargetAddr>
+}
+
 #[derive(Debug)]
 pub struct FunctionData {
     // Address of the size:u32 field in the function header.
@@ -31,8 +55,7 @@ pub struct FunctionData {
     // references the `raw` field of this struct.
     //
     // `ops` and `ops_raw` must be declared in this order to ensure correct drop order.
-    pub ops: BTreeMap<u64, (Operator<'static>, usize)>,
-    pub branches: BTreeMap<u64, Vec<BranchKind>>,
+    pub ops: BTreeMap<u64, OperatorData<'static>>,
     pub _raw: Pin<Box<[u8]>>,
 }
 
@@ -42,8 +65,7 @@ impl FunctionData {
         locals_start: u64,
         ops_start: u64,
         end: u64,
-        ops: BTreeMap<u64, (Operator<'static>, usize)>,
-        branches: BTreeMap<u64, Vec<BranchKind>>,
+        ops: BTreeMap<u64, OperatorData<'static>>,
         raw: Pin<Box<[u8]>>,
     ) -> Self {
         Self {
@@ -52,7 +74,6 @@ impl FunctionData {
             ops_start,
             end,
             ops,
-            branches,
             _raw: raw,
         }
     }
