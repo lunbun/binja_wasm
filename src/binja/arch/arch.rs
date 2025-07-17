@@ -6,7 +6,7 @@ use binaryninja::architecture::{
 use binaryninja::disassembly::InstructionTextToken;
 use binaryninja::low_level_il::MutableLiftedILFunction;
 use binaryninja::Endianness;
-use crate::binja::module_data::MODULE_DATA;
+use crate::binja::parse::module_data::MODULE_DATA;
 
 #[derive(Clone)]
 pub struct WebAssemblyArchitecture {

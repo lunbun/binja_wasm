@@ -1,6 +1,6 @@
 use binaryninja::architecture::{BranchInfo, BranchKind, InstructionInfo};
 use crate::binja::arch::WebAssemblyArchitecture;
-use crate::binja::module_data::MODULE_DATA;
+use crate::binja::parse::module_data::MODULE_DATA;
 
 impl WebAssemblyArchitecture {
     pub(crate) fn _instruction_info(&self, _data: &[u8], addr: u64) -> Option<InstructionInfo> {

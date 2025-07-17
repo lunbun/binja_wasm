@@ -1,5 +1,5 @@
 use crate::binja::arch::WebAssemblyArchitecture;
-use crate::binja::module_data::MODULE_DATA;
+use crate::binja::parse::module_data::MODULE_DATA;
 use binaryninja::disassembly::{InstructionTextToken, InstructionTextTokenKind};
 use wasmparser::Operator;
 
@@ -371,7 +371,7 @@ impl WebAssemblyArchitecture {
                     Operator::I32Const { value } => vec_with_opcode!(
                         "i32.const",
                         InstructionTextToken::new(
-                            format!("{value}"),
+                            format!("{value:#x}"),
                             InstructionTextTokenKind::Integer {
                                 value: *value as u64,
                                 size: Some(4),
@@ -381,7 +381,7 @@ impl WebAssemblyArchitecture {
                     Operator::I64Const { value } => vec_with_opcode!(
                         "i64.const",
                         InstructionTextToken::new(
-                            format!("{value}"),
+                            format!("{value:#x}"),
                             InstructionTextTokenKind::Integer {
                                 value: *value as u64,
                                 size: Some(8),

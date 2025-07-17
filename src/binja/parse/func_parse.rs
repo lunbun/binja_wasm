@@ -1,4 +1,4 @@
-use crate::binja::module_data::FunctionData;
+use crate::binja::parse::module_data::FunctionData;
 use binaryninja::architecture::BranchKind;
 use std::collections::BTreeMap;
 use std::pin::Pin;
