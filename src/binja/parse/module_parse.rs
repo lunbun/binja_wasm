@@ -47,12 +47,14 @@ impl WebAssemblyView {
         &mut self,
         reader: ImportSectionReader,
         func_index: &mut u32,
+        func_addrs: &mut Vec<u64>,
     ) -> Result<(), ()> {
         self.add_wasm_section_default(reader.range(), ".import");
         for import in reader {
             let import = import.map_err(|_| ())?;
             if matches!(import.ty, TypeRef::Func(_)) {
                 *func_index += 1;
+                func_addrs.push(0);
             }
         }
         Ok(())
@@ -190,8 +192,8 @@ impl WebAssemblyView {
                         func_index,
                     )?;
 
-                    module_data.func_addrs.push(size_start);
                     func_index += 1;
+                    module_data.func_addrs.push(size_start);
                 }
 
                 if addr != range.end as u64 {
@@ -214,7 +216,7 @@ impl WebAssemblyView {
                         self.add_wasm_section_default(reader.range(), ".type")
                     }
                     Payload::ImportSection(reader) => {
-                        self.handle_import_section(reader, &mut func_index)?
+                        self.handle_import_section(reader, &mut func_index, &mut module_data.func_addrs)?
                     }
                     Payload::FunctionSection(reader) => {
                         self.add_wasm_section_default(reader.range(), ".function")
