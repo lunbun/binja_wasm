@@ -13,8 +13,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::pin::Pin;
 use wasmparser::{
-    Chunk, ExportSectionReader,
-    ExternalKind, ImportSectionReader, Parser, Payload, TypeRef,
+    Chunk, ExportSectionReader, ExternalKind, ImportSectionReader, Parser, Payload, TypeRef,
 };
 
 impl WebAssemblyView {
@@ -130,8 +129,7 @@ impl WebAssemblyView {
             size_start..end,
             ArcIdentity::new(parse_func(size_start, locals_start, end, raw).map_err(|_| ())?),
         );
-        self.add_auto_function(&self.default_platform().unwrap(), size_start)
-            .ok_or(())?;
+        self.add_auto_function(size_start).ok_or(())?;
 
         if let Some(name) = func_exports.get(&func_index) {
             let symbol = Symbol::builder(SymbolType::Function, name.as_str(), size_start).create();
@@ -215,9 +213,11 @@ impl WebAssemblyView {
                     Payload::TypeSection(reader) => {
                         self.add_wasm_section_default(reader.range(), ".type")
                     }
-                    Payload::ImportSection(reader) => {
-                        self.handle_import_section(reader, &mut func_index, &mut module_data.func_addrs)?
-                    }
+                    Payload::ImportSection(reader) => self.handle_import_section(
+                        reader,
+                        &mut func_index,
+                        &mut module_data.func_addrs,
+                    )?,
                     Payload::FunctionSection(reader) => {
                         self.add_wasm_section_default(reader.range(), ".function")
                     }

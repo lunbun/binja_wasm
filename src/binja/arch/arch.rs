@@ -4,8 +4,8 @@ use binaryninja::architecture::{
     CustomArchitectureHandle, InstructionInfo, RegisterId,
 };
 use binaryninja::disassembly::InstructionTextToken;
-use binaryninja::low_level_il::MutableLiftedILFunction;
 use binaryninja::Endianness;
+use binaryninja::low_level_il::LowLevelILMutableFunction;
 use crate::binja::parse::module_data::MODULE_DATA;
 
 #[derive(Clone)]
@@ -82,7 +82,7 @@ impl Architecture for WebAssemblyArchitecture {
         &self,
         _data: &[u8],
         addr: u64,
-        _il: &mut MutableLiftedILFunction<Self>,
+        _il: &LowLevelILMutableFunction,
     ) -> Option<(usize, bool)> {
         let module_data_lock = MODULE_DATA.lock().unwrap();
         let module_data = module_data_lock.as_ref()?;
