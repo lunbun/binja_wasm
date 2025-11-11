@@ -1,7 +1,13 @@
-binja plugin to add wasm support
+# Binary Ninja WebAssembly
+> ⚠️ Here be dragons! 🐉 ⚠️
+>
+> This project is still in early development.
+> Expect bugs, and use with caution.
 
-currently it can show a text disassembly and recover control flow graph
+Binary Ninja plugin to add WebAssembly support.
 
-its kinda buggy rn
+Currently, this plugin can show a text disassembly and recover a control-flow graph.
 
-i plan on adding IL lifting eventually (maybe)
+In the future, I may add IL lifting.
+
+![Example](docs/image.png)
